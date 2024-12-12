@@ -1,7 +1,7 @@
 #include "stereo-slam-node.hpp"
 
 #include<opencv2/core/core.hpp>
-
+#include <opencv2/imgcodecs/legacy/constants_c.h>
 using std::placeholders::_1;
 using std::placeholders::_2;
 

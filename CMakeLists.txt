@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.5)
 project(orbslam3)
 
 # You should set the PYTHONPATH to your own python site-packages path
-set(ENV{PYTHONPATH} "/opt/ros/foxy/lib/python3.8/site-packages/")
+set(ENV{PYTHONPATH} "/opt/ros/humble/lib/python3.10/site-packages/")
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/CMakeModules)
 
@@ -53,15 +53,28 @@ add_executable(stereo
 ament_target_dependencies(stereo rclcpp sensor_msgs cv_bridge message_filters
 ORB_SLAM3 Pangolin)
 
+target_link_libraries(stereo
+  ${OpenCV_LIBRARIES}
+  -lopencv_calib3d
+)
+
+
 add_executable(stereo-inertial
   src/stereo-inertial/stereo-inertial.cpp
   src/stereo-inertial/stereo-inertial-node.cpp
 )
 ament_target_dependencies(stereo-inertial rclcpp sensor_msgs cv_bridge ORB_SLAM3 Pangolin)
 
+target_link_libraries(stereo-inertial
+  ${OpenCV_LIBRARIES}
+  -lopencv_calib3d
+)
+
+
 install(TARGETS mono rgbd stereo stereo-inertial
   DESTINATION lib/${PROJECT_NAME})
-
+# install(TARGETS mono rgbd stereo
+#   DESTINATION lib/${PROJECT_NAME})
 # Install launch files.
 #install(DIRECTORY launch config vocabulary
 #  DESTINATION share/${PROJECT_NAME}/)

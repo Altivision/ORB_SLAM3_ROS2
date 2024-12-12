@@ -4,7 +4,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/imu.hpp"
-
+#include <opencv2/imgcodecs/legacy/constants_c.h>
 #include <cv_bridge/cv_bridge.h>
 
 #include "System.h"

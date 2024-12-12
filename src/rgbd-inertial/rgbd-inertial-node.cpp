@@ -1,71 +1,26 @@
-#include "stereo-inertial-node.hpp"
+#include "rgbd-inertial-node.hpp"
 
 #include <opencv2/core/core.hpp>
-#include <opencv2/imgcodecs/legacy/constants_c.h>
+
+//SLAM.TrackRGBD(im, depth, timestamp, vImuMeas);
 
 using std::placeholders::_1;
 
-StereoInertialNode::StereoInertialNode(ORB_SLAM3::System *SLAM, const string &strSettingsFile, const string &strDoRectify, const string &strDoEqual) :
-    Node("ORB_SLAM3_ROS2"),
-    SLAM_(SLAM)
+RgbdInertialNode::RgbdInertialNode(ORB_SLAM3::System* pSLAM)
+:   Node("ORB_SLAM3_ROS2"),
+    m_SLAM(pSLAM)
 {
-    stringstream ss_rec(strDoRectify);
-    ss_rec >> boolalpha >> doRectify_;
+    subImu_ = this->create_subscription<ImuMsg>("imu", 1000, std::bind(&RgbdInertialNode::GrabImu, this, _1));
+    subImgRgb_ = this->create_subscription<ImageMsg>("camera/rgb", 100, std::bind(&RgbdInertialNode::GrabImageRgb, this, _1));
+    subImgDepth_ = this->create_subscription<ImageMsg>("camera/depth", 100, std::bind(&RgbdInertialNode::GrabImageDepth, this, _1));
 
-    stringstream ss_eq(strDoEqual);
-    ss_eq >> boolalpha >> doEqual_;
+    syncThread_ = new std::thread(&RgbdInertialNode::SyncWithImu, this);
 
-    bClahe_ = doEqual_;
-    std::cout << "Rectify: " << doRectify_ << std::endl;
-    std::cout << "Equal: " << doEqual_ << std::endl;
-
-    if (doRectify_)
-    {
-        // Load settings related to stereo calibration
-        cv::FileStorage fsSettings(strSettingsFile, cv::FileStorage::READ);
-        if (!fsSettings.isOpened())
-        {
-            cerr << "ERROR: Wrong path to settings" << endl;
-            assert(0);
-        }
-
-        cv::Mat K_l, K_r, P_l, P_r, R_l, R_r, D_l, D_r;
-        fsSettings["LEFT.K"] >> K_l;
-        fsSettings["RIGHT.K"] >> K_r;
-
-        fsSettings["LEFT.P"] >> P_l;
-        fsSettings["RIGHT.P"] >> P_r;
-
-        fsSettings["LEFT.R"] >> R_l;
-        fsSettings["RIGHT.R"] >> R_r;
-
-        fsSettings["LEFT.D"] >> D_l;
-        fsSettings["RIGHT.D"] >> D_r;
-
-        int rows_l = fsSettings["LEFT.height"];
-        int cols_l = fsSettings["LEFT.width"];
-        int rows_r = fsSettings["RIGHT.height"];
-        int cols_r = fsSettings["RIGHT.width"];
-
-        if (K_l.empty() || K_r.empty() || P_l.empty() || P_r.empty() || R_l.empty() || R_r.empty() || D_l.empty() || D_r.empty() ||
-            rows_l == 0 || rows_r == 0 || cols_l == 0 || cols_r == 0)
-        {
-            cerr << "ERROR: Calibration parameters to rectify stereo are missing!" << endl;
-            assert(0);
-        }
-
-        cv::initUndistortRectifyMap(K_l, D_l, R_l, P_l.rowRange(0, 3).colRange(0, 3), cv::Size(cols_l, rows_l), CV_32F, M1l_, M2l_);
-        cv::initUndistortRectifyMap(K_r, D_r, R_r, P_r.rowRange(0, 3).colRange(0, 3), cv::Size(cols_r, rows_r), CV_32F, M1r_, M2r_);
-    }
-
-    subImu_ = this->create_subscription<ImuMsg>("imu", 1000, std::bind(&StereoInertialNode::GrabImu, this, _1));
-    subImgLeft_ = this->create_subscription<ImageMsg>("camera/left", 100, std::bind(&StereoInertialNode::GrabImageLeft, this, _1));
-    subImgRight_ = this->create_subscription<ImageMsg>("camera/right", 100, std::bind(&StereoInertialNode::GrabImageRight, this, _1));
-
-    syncThread_ = new std::thread(&StereoInertialNode::SyncWithImu, this);
 }
 
-StereoInertialNode::~StereoInertialNode()
+
+
+RgbdInertialNode::~RgbdInertialNode()
 {
     // Delete sync thread
     syncThread_->join();
@@ -78,37 +33,40 @@ StereoInertialNode::~StereoInertialNode()
     SLAM_->SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
 }
 
-void StereoInertialNode::GrabImu(const ImuMsg::SharedPtr msg)
+void RgbdInertialNode::GrabImu(const ImuMsg::SharedPtr msg)
 {
     bufMutex_.lock();
     imuBuf_.push(msg);
     bufMutex_.unlock();
 }
 
-void StereoInertialNode::GrabImageLeft(const ImageMsg::SharedPtr msgLeft)
+void RgbdInertialNode::GrabImageRgb(const ImageMsg::SharedPtr msgRgb)
 {
-    bufMutexLeft_.lock();
+    bufMutexRgb_.lock();
 
-    if (!imgLeftBuf_.empty())
-        imgLeftBuf_.pop();
-    imgLeftBuf_.push(msgLeft);
+    if (!imgRgbBuf_.empty())
+        imgRgbBuf_.pop();
+    imgRgbBuf_.push(msgRgb);
 
-    bufMutexLeft_.unlock();
+    bufMutexRgb_.unlock();
 }
 
-void StereoInertialNode::GrabImageRight(const ImageMsg::SharedPtr msgRight)
+void RgbdInertialNode::GrabImageDepth(const ImageMsg::SharedPtr msgDepth)
 {
-    bufMutexRight_.lock();
+    bufMutexDepth_.lock();
 
-    if (!imgRightBuf_.empty())
-        imgRightBuf_.pop();
-    imgRightBuf_.push(msgRight);
+    if (!imgDepthBuf_.empty())
+        imgDepthBuf_.pop();
+    imgDepthBuf_.push(msgDepth);
 
-    bufMutexRight_.unlock();
+    bufMutexDepth_.unlock();
 }
 
-cv::Mat StereoInertialNode::GetImage(const ImageMsg::SharedPtr msg)
-{
+// im = cv::Mat(cv::Size(width_img, height_img), CV_8UC3, (void*)(color_frame.get_data()), cv::Mat::AUTO_STEP);
+// depth = cv::Mat(cv::Size(width_img, height_img), CV_16U, (void*)(depth_frame.get_data()), cv::Mat::AUTO_STEP);
+
+
+cv::Mat RgbdInertialNode::GetRgbImage(const ImageMsg::SharedPtr msg){
     // Copy the ros image message to cv::Mat.
     cv_bridge::CvImageConstPtr cv_ptr;
 
@@ -132,7 +90,59 @@ cv::Mat StereoInertialNode::GetImage(const ImageMsg::SharedPtr msg)
     }
 }
 
-void StereoInertialNode::SyncWithImu()
+cv::Mat RgbdInertialNode::GetRgbImage(const ImageMsg::SharedPtr msg)
+{
+    // Copy the ros image message to cv::Mat.
+    cv_bridge::CvImageConstPtr cv_ptr;
+
+    try
+    {
+        cv_ptr = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::RGB8);
+    }
+    catch (cv_bridge::Exception &e)
+    {
+        RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
+    }
+
+    if (cv_ptr->image.type() == 0)
+    {
+        return cv_ptr->image.clone();
+    }
+    else
+    {
+        std::cerr << "Error image type" << std::endl;
+        return cv_ptr->image.clone();
+    }
+}
+
+cv::Mat RgbdInertialNode::GetDepthImage(const ImageMsg::SharedPtr msg)
+{
+    // Copy the ros image message to cv::Mat.
+    cv_bridge::CvImageConstPtr cv_ptr;
+
+    try
+    {
+        cv_ptr = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::RGB8);
+    }
+    catch (cv_bridge::Exception &e)
+    {
+        RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
+    }
+
+    if (cv_ptr->image.type() == 0)
+    {
+        return cv_ptr->image.clone();
+    }
+    else
+    {
+        std::cerr << "Error image type" << std::endl;
+        return cv_ptr->image.clone();
+    }
+}
+
+
+
+void RgbdInertialNode::SyncWithImu()
 {
     const double maxTimeDiff = 0.01;
 
@@ -202,11 +212,6 @@ void StereoInertialNode::SyncWithImu()
                 clahe_->apply(imRight, imRight);
             }
 
-            if (doRectify_)
-            {
-                cv::remap(imLeft, imLeft, M1l_, M2l_, cv::INTER_LINEAR);
-                cv::remap(imRight, imRight, M1r_, M2r_, cv::INTER_LINEAR);
-            }
 
             SLAM_->TrackStereo(imLeft, imRight, tImLeft, vImuMeas);
 
