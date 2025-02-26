@@ -70,8 +70,15 @@ target_link_libraries(stereo-inertial
   -lopencv_calib3d
 )
 
+add_executable(rgbd-inertial
+  src/rgbd-inertial/rgbd-inertial.cpp
+  src/rgbd-inertial/rgbd-inertial-node.cpp
+)
 
-install(TARGETS mono rgbd stereo stereo-inertial
+ament_target_dependencies(rgbd-inertial rclcpp sensor_msgs cv_bridge message_filters ORB_SLAM3 Pangolin OpenCV)
+
+
+install(TARGETS mono rgbd stereo stereo-inertial rgbd-inertial
   DESTINATION lib/${PROJECT_NAME})
 # install(TARGETS mono rgbd stereo
 #   DESTINATION lib/${PROJECT_NAME})
